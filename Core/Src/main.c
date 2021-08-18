@@ -58,12 +58,6 @@ int _write(int file, char* p, int len)
 	HAL_UART_Transmit(&huart3, p, len, 10);
 	return len;
 }
-
-
-
-
-
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -115,10 +109,12 @@ int CleanUp(double val, int tries){
 	return avg;
 
 }
-
-int Cross(){
-
+uint32_t elapsed, pressed=0;
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+	elapsed = HAL_GetTick();
+	//pressed = false;
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -167,12 +163,9 @@ int main(void)
   HAL_ADC_Start_DMA(&hadc1, &ADC1Result[0], 8);
   for(int i=0;i<8;i++){ADC1Min[i] = 4095;}
 
-
-  int zCnt; // Zero Count
-
-  int32_t Pos1;
-  int32_t Pos2;
-  int32_t pPos2 = 780;
+  int32_t weight;
+  int32_t wsum;
+  int32_t maxSum = 780;
   int16_t Pos3;
 
   int32_t Err; 			// Current Error
@@ -185,9 +178,6 @@ int main(void)
 
   uint32_t cTime;
   uint32_t pTime;
-
-  TIM1->CCR3 = vINIT;
-  TIM1->CCR4 = vINIT;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -197,64 +187,55 @@ int main(void)
 		if(ADC1Result[i] >= ADC1Max[i]) ADC1Max[i] = ADC1Result[i];
 		if(ADC1Result[i] <= ADC1Min[i] && ADC1Result[i] > 100) ADC1Min[i] = ADC1Result[i];
 
-		ADC1Current[i] = ((ADC1Result[i]-ADC1Min[i]) * 100)/(ADC1Max[i] - ADC1Min[i]); // 100 ?��규화
+		ADC1Current[i] = ((ADC1Result[i]-ADC1Min[i]) * 100)/(ADC1Max[i] - ADC1Min[i]);
 		ADC1Norm[i] = ADC1Current[i];
 	}
 
 	cTime = HAL_GetTick();
 	double delay_Time = (double)(cTime - pTime);
 
-	Pos1 = (ADC1Norm[0]-ADC1Norm[7])*WEIGHT4 + (ADC1Norm[1]-ADC1Norm[6])*WEIGHT3 + (ADC1Norm[2]-ADC1Norm[5])*WEIGHT2 + (ADC1Norm[3]-ADC1Norm[4])*WEIGHT1;
-	Pos2 = (ADC1Norm[0]+ADC1Norm[1]+ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]+ADC1Norm[6]+ADC1Norm[7]);
+	weight = (ADC1Norm[0]-ADC1Norm[7])*WEIGHT4 + (ADC1Norm[1]-ADC1Norm[6])*WEIGHT3 + (ADC1Norm[2]-ADC1Norm[5])*WEIGHT2 + (ADC1Norm[3]-ADC1Norm[4])*WEIGHT1;
+	wsum = (ADC1Norm[0]+ADC1Norm[1]+ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]+ADC1Norm[6]+ADC1Norm[7]);
 
-	if(Pos2 > 700) HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0);
-	else HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 1);
-	if((ADC1Norm[3]+ADC1Norm[4]) < 8) HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
-	else HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 1);
-
-	if(Pos1<0)
-		Pos3 = -(int)(- Pos1 / Pos2);
+	if(wsum > 700) // Initialize Check & White All Position
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0);
 	else
-		Pos3 =  (int)(Pos1 / Pos2);
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 1);
+	//
+	if((ADC1Norm[3]+ADC1Norm[4]) <= 8) // Middle Point
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
+	else
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 1);
+	//
 
-	Err = Pos3;
+	if(weight<0) Err = -(int)(- weight / wsum);
+	else Err =  (int)(weight / wsum)
 	ErrDif = (Err - pErr);
-	// ErrSum += Err;
 
-	dV1 = kP1 * Err + (kD / delay_Time) * ErrDif ; //+ (kI * delay_Time) * ErrSum ;
+	dV1 = kP1 * Err + (kD / delay_Time) * ErrDif ;
 	dV2 = kP2 * Err + (kD / delay_Time) * ErrDif ;
 
-	if((ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]) <= 100 )  {dV1 = 0; dV2 = 0; printf("Cross Line!");}
-	vRight = vINIT - CleanUp(dV2, CLEAN_SIZE);
-	vLeft  = vINIT + CleanUp(dV1, CLEAN_SIZE);
+    if(!HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_4)==pressed){		// K0 usr btn, Active Low (Push 0)
+    	if(cTime - elapsed > 1000) {
+    		pressed = !pressed; HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0);
+    	}
+    }
+	else if((ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]) <= 100 )
+	{
+		dV1 = 0; dV2 = 0;
+		printf("Cross Line!");
+	}
+
+	vRight = pressed&(vINIT - CleanUp(dV2, CLEAN_SIZE));
+	vLeft  = pressed&(vINIT + CleanUp(dV1, CLEAN_SIZE));
 
 	TIM1->CCR3 = vLeft;  // A
 	TIM1->CCR4 = vRight; // B
 
 
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[7], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[7]);
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[6], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[6]);
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[5], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[5]);
-//
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[4], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[4]);
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[3], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[3]);
-//
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[2], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[2]);
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[1], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[1]);
-//	 /**/ printf("%2d ",  CleanUp(ADC1Norm[0], CLEAN_SIZE)); /**/ //printf("%2d ",  (ADC1Norm[0]);
-
-	printf("%2d ", Pos2);
-	printf("%2d ", pPos2);
-
-	// printf("200 ");
-//	 printf("%2d ", CleanUp(dV1, CLEAN_SIZE));
-//	 printf("%2d ", CleanUp(Err, CLEAN_SIZE));
-	// printf("-200 ");
-
 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	  printf("\n  ");
 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	  pErr = Err;
 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	  pTime = cTime;
-	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	  zCnt = 0;
 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	  HAL_Delay(10);
 
     /* USER CODE END WHILE */
