@@ -74,8 +74,8 @@ int _write(int file, char* p, int len)
 #define WEIGHT2 150
 #define WEIGHT1 50
 
-#define kP1 5
-#define kP2 kP1*1.8
+#define kP1 6
+#define kP2 kP1*1.7
 #define kI 0
 #define kD 5
 
@@ -109,10 +109,10 @@ int CleanUp(double val, int tries){
 	return avg;
 
 }
-uint32_t elapsed, pressed=0;
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-	elapsed = HAL_GetTick();
-	//pressed = false;
+uint32_t pressed=0;
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){	// K0 Button Active Low (psh 0)
+	pressed = !pressed;
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, pressed);
 }
 
 /* USER CODE END 0 */
@@ -150,23 +150,17 @@ int main(void)
   MX_TIM1_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+
   //HAL_ADC_Init(&hadc1);
   HAL_TIM_PWM_Init(&htim1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_10, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_11, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_12, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_10, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_11, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOE, GPIO_PIN_12, GPIO_PIN_SET);
 
   HAL_ADC_Start_DMA(&hadc1, &ADC1Result[0], 8);
   for(int i=0;i<8;i++){ADC1Min[i] = 4095;}
-
-  int32_t weight;
-  int32_t wsum;
-  int32_t maxSum = 780;
-  int16_t Pos3;
 
   int32_t Err; 			// Current Error
   int32_t pErr;			// Previous Error
@@ -174,6 +168,7 @@ int main(void)
 
   int32_t dV1;
   int32_t dV2;
+  int32_t weight, wsum;
   int32_t vRight, vLeft;
 
   uint32_t cTime;
@@ -187,8 +182,7 @@ int main(void)
 		if(ADC1Result[i] >= ADC1Max[i]) ADC1Max[i] = ADC1Result[i];
 		if(ADC1Result[i] <= ADC1Min[i] && ADC1Result[i] > 100) ADC1Min[i] = ADC1Result[i];
 
-		ADC1Current[i] = ((ADC1Result[i]-ADC1Min[i]) * 100)/(ADC1Max[i] - ADC1Min[i]);
-		ADC1Norm[i] = ADC1Current[i];
+		ADC1Current[i] = ((ADC1Result[i]-ADC1Min[i]) * 100)/(ADC1Max[i] - ADC1Min[i]); ADC1Norm[i] = ADC1Current[i];
 	}
 
 	cTime = HAL_GetTick();
@@ -197,35 +191,26 @@ int main(void)
 	weight = (ADC1Norm[0]-ADC1Norm[7])*WEIGHT4 + (ADC1Norm[1]-ADC1Norm[6])*WEIGHT3 + (ADC1Norm[2]-ADC1Norm[5])*WEIGHT2 + (ADC1Norm[3]-ADC1Norm[4])*WEIGHT1;
 	wsum = (ADC1Norm[0]+ADC1Norm[1]+ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]+ADC1Norm[6]+ADC1Norm[7]);
 
-	if(wsum > 700) // Initialize Check & White All Position
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0);
-	else
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 1);
-	//
 	if((ADC1Norm[3]+ADC1Norm[4]) <= 8) // Middle Point
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
 	else
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 1);
-	//
 
 	if(weight<0) Err = -(int)(- weight / wsum);
-	else Err =  (int)(weight / wsum)
-	ErrDif = (Err - pErr);
+	else Err =  (int)(weight / wsum);
 
+	ErrDif = (Err - pErr);
 	dV1 = kP1 * Err + (kD / delay_Time) * ErrDif ;
 	dV2 = kP2 * Err + (kD / delay_Time) * ErrDif ;
 
-    if(!HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_4)==pressed){		// K0 usr btn, Active Low (Push 0)
-    	if(cTime - elapsed > 1000) {
-    		pressed = !pressed; HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0);
-    	}
-    }
-	else if((ADC1Norm[2]+ADC1Norm[3]+ADC1Norm[4]+ADC1Norm[5]) <= 100 )
+	int crMax = 13; // Cross Line Maximum Value
+	if(wsum <= crMax*8)
 	{
 		dV1 = 0; dV2 = 0;
 		printf("Cross Line!");
 	}
 
+	// if pressed==false, it can not drive out
 	vRight = pressed&(vINIT - CleanUp(dV2, CLEAN_SIZE));
 	vLeft  = pressed&(vINIT + CleanUp(dV1, CLEAN_SIZE));
 
